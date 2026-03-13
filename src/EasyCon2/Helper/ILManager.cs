@@ -181,23 +181,51 @@ internal class ILManager : INotifyPropertyChanged
         }
     }
 
-    public BindingList<ILViewModel> Labels = [];
+    public BindingList<ILViewModel> Labels = new BindingList<ILViewModel>();
 
     public void LoadImgLabels(string path)
     {
-        Directory.CreateDirectory(path);
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"LoadImgLabels: 创建目录失败 {path}: {ex.Message}");
+            return;
+        }
+
         Labels.Clear();
 
-        foreach (var file in Directory.GetFiles(path, "*.IL"))
+        // enumerate common label extensions, case-insensitive and avoid duplicate base names
+        var patterns = new[] { "*.il", "*.ilx" };
+        var files = new List<string>();
+        foreach (var p in patterns)
+        {
+            try
+            {
+                files.AddRange(Directory.EnumerateFiles(path, p, SearchOption.TopDirectoryOnly));
+            }
+            catch { }
+        }
+
+        // Group by base filename to avoid duplicates when multiple extensions or case variants exist
+        var uniqueFiles = files
+            .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        Debug.WriteLine($"LoadImgLabels: path={path}, found {files.Count} files, unique {uniqueFiles.Count} base names");
+        foreach (var file in uniqueFiles)
         {
             try
             {
                 var il = ECSearch.LoadIL(file);
                 Labels.Add(new ILViewModel(il));
             }
-            catch
+            catch (Exception ex)
             {
-                Debug.WriteLine("无法加载标签:", file);
+                Debug.WriteLine($"无法加载标签: {file} ({ex.Message})");
             }
         }
     }
@@ -210,9 +238,14 @@ internal class ILManager : INotifyPropertyChanged
     }
 }
 
-internal class ILViewModel(ImgLabel label) : INotifyPropertyChanged
+internal class ILViewModel : INotifyPropertyChanged
 {
-    private ImgLabel _cur = label;
+    private ImgLabel _cur;
+
+    public ILViewModel(ImgLabel label)
+    {
+        _cur = label;
+    }
 
     public ImgLabel Current => _cur;
 

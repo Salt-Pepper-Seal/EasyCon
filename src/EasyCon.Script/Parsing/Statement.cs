@@ -30,16 +30,26 @@ class EndBlockStmt : Statement
     protected override string _GetString() => "END";
 }
 
-sealed class ImportStmt(string path) : Statement
+sealed class ImportStmt : Statement
 {
-    internal readonly string LibPath = path;
+    internal readonly string LibPath;
+
+    public ImportStmt(string path)
+    {
+        LibPath = path;
+    }
 
     protected override string _GetString() => $"IMPORT \"{LibPath}\"";
 }
 
-sealed class CompicationUnit(ImmutableArray<Statement> members)
+sealed class CompicationUnit
 {
-    public readonly ImmutableArray<Statement> Members = members;
+    public readonly ImmutableArray<Statement> Members;
+
+    public CompicationUnit(ImmutableArray<Statement> members)
+    {
+        Members = members;
+    }
 }
 
 internal static class FormatPrinter

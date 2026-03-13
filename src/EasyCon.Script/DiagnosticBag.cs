@@ -6,7 +6,7 @@ namespace EasyCon.Script2;
 
 internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
 {
-    private readonly List<Diagnostic> _diagnostics = [];
+    private readonly List<Diagnostic> _diagnostics = new List<Diagnostic>();
 
     public IEnumerator<Diagnostic> GetEnumerator() => _diagnostics.GetEnumerator();
 

@@ -58,7 +58,7 @@ public sealed class Scripter
     public static string ToggleComment(string input, bool comm)
     {
         if (string.IsNullOrWhiteSpace(input))
-            return input ?? string.Empty;
+            return string.Empty;
 
         // 找到第一个非空白字符的位置
         int firstNonWhitespaceIndex = -1;

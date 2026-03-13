@@ -10,6 +10,10 @@ namespace EasyCon2.Forms
 {
     public partial class CaptureVideoForm : Form, IDisposable
     {
+
+        // Optional external label path (absolute). When set, this path will be used to load labels instead of the default ImgDir.
+        public string LabelPath { get; set; }
+
         private enum MonitorMode
         {
             NoBorder = 0,
@@ -77,7 +81,40 @@ namespace EasyCon2.Forms
 
         public IEnumerable<ImgLabel> LoadedLabels => imglManager.Labels.Select(il => il.Current);
 
-        public void LoadImgLabels() => imglManager.LoadImgLabels(ImgDir);
+        public void LoadImgLabels()
+        {
+            if (!string.IsNullOrWhiteSpace(LabelPath) && Directory.Exists(LabelPath))
+                imglManager.LoadImgLabels(LabelPath);
+            else
+                imglManager.LoadImgLabels(ImgDir);
+        }
+
+        public void LoadImgLabels(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                path = ImgDir;
+            imglManager.LoadImgLabels(path);
+        }
+
+        /// <summary>
+        /// Set external label path and reload labels on UI thread.
+        /// </summary>
+        public void SetLabelPathAndReload(string path)
+        {
+            LabelPath = path;
+            try
+            {
+                if (this.InvokeRequired)
+                {
+                    this.Invoke((Action)(() => LoadImgLabels(path)));
+                }
+                else
+                {
+                    LoadImgLabels(path);
+                }
+            }
+            catch { }
+        }
 
         public CaptureVideoForm()
         {
@@ -107,7 +144,11 @@ namespace EasyCon2.Forms
             Directory.CreateDirectory(CapDir);
             Directory.CreateDirectory(ImgDir);
 
-            imglManager.LoadImgLabels(ImgDir);
+            // prefer externally set LabelPath if provided and exists
+            if (!string.IsNullOrWhiteSpace(LabelPath) && Directory.Exists(LabelPath))
+                imglManager.LoadImgLabels(LabelPath);
+            else
+                imglManager.LoadImgLabels(ImgDir);
 
             VideoMonitor.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             VideoMonitor.PaintEventHandler += MonitorPaint;

@@ -165,7 +165,7 @@ partial class EasyConForm
     private async Task<byte[]> ScriptBuild()
     {
         var bytes = _program.Assemble(烧录自动运行ToolStripMenuItem.Checked);
-        return bytes ?? [];
+        return bytes ?? new byte[0];
     }
 
     private async Task<bool> GenerateFirmware(Board board)

@@ -7,11 +7,11 @@ class Assembler
 {
     public const uint IReg = 7;
 
-    readonly List<Instruction> _instructions = [];
-    public readonly Dictionary<int, Instructions.AsmKey_Hold> KeyMapping = [];
-    public readonly Dictionary<int, Instructions.AsmStick_Hold> StickMapping = [];
-    public readonly Dictionary<string, Instructions.AsmBranch> FunctionMapping = [];
-    public readonly Dictionary<string, Instructions.AsmEmpty> CallMapping = [];
+    readonly List<Instruction> _instructions = new List<Instruction>();
+    public readonly Dictionary<int, Instructions.AsmKey_Hold> KeyMapping = new Dictionary<int, Instructions.AsmKey_Hold>();
+    public readonly Dictionary<int, Instructions.AsmStick_Hold> StickMapping = new Dictionary<int, Instructions.AsmStick_Hold>();
+    public readonly Dictionary<string, Instructions.AsmBranch> FunctionMapping = new Dictionary<string, Instructions.AsmBranch>();
+    public readonly Dictionary<string, Instructions.AsmEmpty> CallMapping = new Dictionary<string, Instructions.AsmEmpty>();
 
 
     static Instruction Assert(Instruction ins)
@@ -90,13 +90,13 @@ class Assembler
         throw new AssembleException("此版本暂不支持编译");
         // optimize
         var discarded = new HashSet<Instruction>();
-        List<Instruction> list = new();
+        List<Instruction> list = new List<Instruction>();
         foreach (var item in _instructions)
         {
             list.Add(item);
 
             // 1 Instruction
-            var ins1 = list[^1]; // list.Count - 1
+            var ins1 = list[list.Count - 1]; // last element
 
             // 2 Instructions
             if (list.Count < 2)
@@ -121,7 +121,7 @@ class Assembler
                 continue;
             var ins3 = ins2;
             ins2 = ins1;
-            ins1 = list[^3];
+            ins1 = list[list.Count - 3];
             // if-loopcontrol-endif => loopcontrol_cf
             if (ins1 is Instructions.AsmBranchFalse falseins && ins2 is Instructions.AsmLoopControl ctlins && ins3 is Instructions.AsmEmpty && falseins.Target == ins3)
             {

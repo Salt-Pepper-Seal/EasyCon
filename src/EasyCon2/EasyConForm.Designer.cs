@@ -35,6 +35,7 @@ namespace EasyCon2.Forms
             打开ToolStripMenuItem = new ToolStripMenuItem();
             保存ToolStripMenuItem = new ToolStripMenuItem();
             另存为ToolStripMenuItem = new ToolStripMenuItem();
+            打包ToolStripMenuItem = new ToolStripMenuItem();
             关闭ToolStripMenuItem = new ToolStripMenuItem();
             toolStripSeparator1 = new ToolStripSeparator();
             退出ToolStripMenuItem = new ToolStripMenuItem();
@@ -137,7 +138,7 @@ namespace EasyCon2.Forms
             // 
             // 文件ToolStripMenuItem
             // 
-            文件ToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { 新建ToolStripMenuItem, 打开ToolStripMenuItem, 保存ToolStripMenuItem, 另存为ToolStripMenuItem, 关闭ToolStripMenuItem, toolStripSeparator1, 退出ToolStripMenuItem });
+            文件ToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { 新建ToolStripMenuItem, 打开ToolStripMenuItem, 保存ToolStripMenuItem, 另存为ToolStripMenuItem, 打包ToolStripMenuItem, 关闭ToolStripMenuItem, toolStripSeparator1, 退出ToolStripMenuItem });
             文件ToolStripMenuItem.Name = "文件ToolStripMenuItem";
             文件ToolStripMenuItem.Size = new Size(53, 24);
             文件ToolStripMenuItem.Text = "文件";
@@ -173,6 +174,13 @@ namespace EasyCon2.Forms
             另存为ToolStripMenuItem.Size = new Size(236, 26);
             另存为ToolStripMenuItem.Text = "另存为";
             另存为ToolStripMenuItem.Click += 另存为ToolStripMenuItem_Click;
+            // 
+            // 打包ToolStripMenuItem
+            // 
+            打包ToolStripMenuItem.Name = "打包ToolStripMenuItem";
+            打包ToolStripMenuItem.Size = new Size(236, 26);
+            打包ToolStripMenuItem.Text = "打包";
+            打包ToolStripMenuItem.Click += 打包ToolStripMenuItem_Click;
             // 
             // 关闭ToolStripMenuItem
             // 
@@ -951,6 +959,7 @@ namespace EasyCon2.Forms
         private System.Windows.Forms.ToolStripMenuItem 打开ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 保存ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 另存为ToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem 打包ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 关闭ToolStripMenuItem;
         private System.Windows.Forms.ToolStripSeparator toolStripSeparator1;
         private System.Windows.Forms.ToolStripMenuItem 退出ToolStripMenuItem;

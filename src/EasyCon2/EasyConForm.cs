@@ -18,6 +18,9 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
 using System.Xml;
+using System.IO.Compression;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace EasyCon2.Forms
 {
@@ -34,6 +37,7 @@ namespace EasyCon2.Forms
         private NintendoSwitch NS = new();
         private readonly Scripter _program = new();
         private CaptureVideoForm captureVideo = new();
+        private string? _currentLabelPath = null;
 
         private QqAssist ws = new();
 
@@ -45,7 +49,7 @@ namespace EasyCon2.Forms
         private readonly string defaultName = "未命名脚本";
         private string fileName => textEditor.Document.FileName == null ? defaultName : Path.GetFileName(textEditor.Document.FileName);
 
-        private readonly List<ToolStripMenuItem> captureTypes = [];
+        private readonly List<ToolStripMenuItem> captureTypes = new List<ToolStripMenuItem>();
 
         public EasyConForm()
         {
@@ -54,7 +58,34 @@ namespace EasyCon2.Forms
             virtController = new VPadForm(this, this.NS);
 
             LoadConfig();
+            // ensure captureVideo respects any current label path
+            if (!string.IsNullOrWhiteSpace(_currentLabelPath))
+                captureVideo.LabelPath = _currentLabelPath;
             captureVideo.LoadImgLabels();
+        }
+
+        private static string MakeRelativePath(string basePath, string path)
+        {
+            try
+            {
+                var baseUri = new Uri(AppendDirectorySeparatorChar(Path.GetFullPath(basePath)));
+                var targetUri = new Uri(Path.GetFullPath(path));
+                var rel = Uri.UnescapeDataString(baseUri.MakeRelativeUri(targetUri).ToString()).Replace('/', Path.DirectorySeparatorChar);
+                if (!rel.StartsWith(".") && !rel.StartsWith(".."))
+                    rel = "." + Path.DirectorySeparatorChar + rel;
+                return rel;
+            }
+            catch
+            {
+                return path;
+            }
+        }
+
+        private static string AppendDirectorySeparatorChar(string path)
+        {
+            if (!path.EndsWith(Path.DirectorySeparatorChar))
+                return path + Path.DirectorySeparatorChar;
+            return path;
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -119,11 +150,11 @@ namespace EasyCon2.Forms
         {
             textEditor.ShowLineNumbers = true;
             var syntaxHighlighting = HighlightingLoader.Load(XmlReader.Create(new MemoryStream(Resources.ecp)), HighlightingManager.Instance);
-            HighlightingManager.Instance.RegisterHighlighting("ECP", [".txt", ".ecp"], syntaxHighlighting);
+            HighlightingManager.Instance.RegisterHighlighting("ECP", new[] { ".txt", ".ecp" }, syntaxHighlighting);
             var luaHighlighting = HighlightingLoader.Load(XmlReader.Create(new MemoryStream(Resources.lua)), HighlightingManager.Instance);
-            HighlightingManager.Instance.RegisterHighlighting("Lua", [".lua"], luaHighlighting);
+            HighlightingManager.Instance.RegisterHighlighting("Lua", new[] { ".lua" }, luaHighlighting);
             var pyHighlighting = HighlightingLoader.Load(XmlReader.Create(new MemoryStream(Resources.Python_Mode)), HighlightingManager.Instance);
-            HighlightingManager.Instance.RegisterHighlighting("Python", [".py"], pyHighlighting);
+            HighlightingManager.Instance.RegisterHighlighting("Python", new[] { ".py" }, pyHighlighting);
             textEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinition("ECP");
             textEditor.DragEnter += new System.Windows.DragEventHandler(this.textBoxScript_DragEnter);
             textEditor.Drop += new System.Windows.DragEventHandler(this.textBoxScript_DragDrop);
@@ -217,7 +248,14 @@ namespace EasyCon2.Forms
                     dev_type = (int)item.Tag;
             }
 
-            captureVideo = new CaptureVideoForm((int)(((ToolStripMenuItem)sender).Tag), dev_type);
+            var newCap = new CaptureVideoForm((int)(((ToolStripMenuItem)sender).Tag), dev_type);
+            // pass along resolved label path so the new window loads correct labels
+            if (!string.IsNullOrWhiteSpace(_currentLabelPath))
+            {
+                newCap.LabelPath = _currentLabelPath;
+                try { newCap.LoadImgLabels(newCap.LabelPath); } catch { }
+            }
+            captureVideo = newCap;
             captureVideo.Show();
             StatusShowLog($"已加载搜图标签：{captureVideo.LoadedLabels.Count()}");
         }
@@ -463,7 +501,7 @@ namespace EasyCon2.Forms
             EnableConnBtn(false);
             StatusShowLog("尝试连接...");
 
-            var ports = port == "" ? ECDevice.GetPortNames() : [port];
+            var ports = port == "" ? ECDevice.GetPortNames() : new List<string> { port };
 
             await Task.Run(() =>
             {
@@ -525,6 +563,39 @@ namespace EasyCon2.Forms
             textEditor.IsModified = false;
             textEditor.Document.FileName = _currentFile;
             textEditor.SyntaxHighlighting = HighlightingManager.Instance.GetDefinitionByExtension(Path.GetExtension(_currentFile));
+            // If there's a config.json in the script folder that defines LabelPath, load labels from it
+            try
+            {
+                var cfgPath = Path.Combine(Path.GetDirectoryName(_currentFile) ?? string.Empty, "config.json");
+                logTxtBox.Print($"[DEBUG] Checking config.json at: {cfgPath}");
+                var labelPath = ResolveLabelPathForScript(_currentFile);
+                var displayLabelPath = labelPath != null ? MakeRelativePath(Application.StartupPath, labelPath) : null;
+                logTxtBox.Print($"[DEBUG] Resolved LabelPath: {displayLabelPath ?? labelPath}");
+                if (!string.IsNullOrWhiteSpace(labelPath) && Directory.Exists(labelPath))
+                {
+                    _currentLabelPath = labelPath;
+                    captureVideo.SetLabelPathAndReload(labelPath);
+                    StatusShowLog($"已从 {labelPath} 加载识图标签");
+                    logTxtBox.Print($"[DEBUG] LoadImgLabels from: {MakeRelativePath(Application.StartupPath, labelPath)}");
+                    var names = captureVideo.LoadedLabels.Select(il => il.name).ToArray();
+                    logTxtBox.Print($"[DEBUG] Labels loaded ({names.Length}): {string.Join(", ", names)}");
+                }
+                else
+                {
+                    _currentLabelPath = null;
+                    captureVideo.LabelPath = null;
+                    captureVideo.LoadImgLabels();
+                    var namesFallback = captureVideo.LoadedLabels.Select(il => il.name).ToArray();
+                    logTxtBox.Print($"[DEBUG] Fallback load from default ImgLabel: {MakeRelativePath(Application.StartupPath, Path.Combine(Application.StartupPath, "ImgLabel"))}");
+                    logTxtBox.Print($"[DEBUG] Labels loaded ({namesFallback.Length}): {string.Join(", ", namesFallback)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                captureVideo.LabelPath = null;
+                captureVideo.LoadImgLabels();
+                logTxtBox.Print($"[DEBUG] Exception while loading labels, fallback to default. Labels loaded: {captureVideo.LoadedLabels.Count()} Error: {ex.Message}");
+            }
             return true;
         }
 
@@ -825,6 +896,279 @@ namespace EasyCon2.Forms
         private void 另存为ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             FileSave(true);
+        }
+
+        private async void 打包ToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            // prompt for project name first (do not force saving yet)
+            var initialName = textEditor.Document.FileName != null ? Path.GetFileNameWithoutExtension(textEditor.Document.FileName) : defaultName;
+            var projectName = PromptInput("打包项目", "请输入项目名:", initialName ?? "项目");
+            if (string.IsNullOrWhiteSpace(projectName))
+                return;
+
+            // determine target local dirs
+            var appBase = Application.StartupPath;
+            var localScriptRoot = Path.GetFullPath(ScriptPath);
+            var localImgRoot = Path.Combine(appBase, "ImgLabel");
+
+            var targetScriptDir = Path.Combine(localScriptRoot, projectName);
+            var targetImgDir = Path.Combine(localImgRoot, projectName);
+
+            // Ask user for merge/replace behavior only if ImgLabel target exists.
+            bool mergeReplace = true;
+            if (Directory.Exists(targetImgDir))
+            {
+                var packDialog = new PackProjectDialog(projectName, targetScriptDir, targetImgDir);
+                var dlgRes = packDialog.ShowDialog(this);
+                if (dlgRes != DialogResult.OK)
+                    return;
+                projectName = packDialog.ProjectName;
+                mergeReplace = packDialog.MergeReplace;
+                targetScriptDir = Path.Combine(localScriptRoot, projectName);
+                targetImgDir = Path.Combine(localImgRoot, projectName);
+            }
+
+            // determine zip path (default to ScriptPath)
+            var zipDir = Path.GetFullPath(ScriptPath);
+            Directory.CreateDirectory(zipDir);
+            var zipPath = Path.Combine(zipDir, projectName + ".zip");
+
+            // capture current values for background task
+            var scriptFile = textEditor.Document.FileName;
+            var scriptText = textEditor.Text;
+
+            // resolve label source now (try script-local then app root)
+            var labelSourcePathResolved = ResolveLabelPathForScript(scriptFile) ?? localImgRoot;
+            logTxtBox.Print($"使用的标签源路径: {labelSourcePathResolved}");
+
+            // Determine used labels in current script by tokenizing script and matching against files in label source
+            var tokens = new HashSet<string>(Scripter.GetTokens(scriptText, ""), StringComparer.OrdinalIgnoreCase);
+            // normalize tokens by trimming leading sigils like @ or $
+            var normTokens = new HashSet<string>(tokens.Select(t => t.TrimStart('@', '$')), StringComparer.OrdinalIgnoreCase);
+            logTxtBox.Print($"[DEBUG] Tokens: {string.Join(", ", tokens)}");
+            logTxtBox.Print($"[DEBUG] NormTokens: {string.Join(", ", normTokens)}");
+            var usedLabels = new List<string>();
+            if (Directory.Exists(labelSourcePathResolved))
+            {
+                foreach (var f in Directory.EnumerateFiles(labelSourcePathResolved))
+                {
+                    var baseName = Path.GetFileNameWithoutExtension(f);
+                    if (string.IsNullOrWhiteSpace(baseName))
+                        continue;
+                    if (tokens.Contains(baseName) || normTokens.Contains(baseName))
+                    {
+                        usedLabels.Add(baseName);
+                        logTxtBox.Print($"[DEBUG] Matched label: {baseName}");
+                    }
+                }
+            }
+            logTxtBox.Print($"[DEBUG] Total used labels: {usedLabels.Count}");
+
+            // run packaging in background
+            StatusShowLog("开始打包...");
+            logTxtBox.Print("开始打包...");
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    Directory.CreateDirectory(targetScriptDir);
+                    Directory.CreateDirectory(targetImgDir);
+
+                    // move used labels
+                    var filesToMove = new List<string>();
+                    if (Directory.Exists(labelSourcePathResolved))
+                    {
+                        // enumerate candidate files and match by base name
+                        var candidates = Directory.EnumerateFiles(labelSourcePathResolved, "*.*", SearchOption.TopDirectoryOnly)
+                            .Where(f => new[] { ".il", ".IL", ".ilx", ".ILX" }.Contains(Path.GetExtension(f)))
+                            .ToList();
+                        Invoke(() => logTxtBox.Print($"[DEBUG] Candidate label files: {candidates.Count}"));
+                        foreach (var f in candidates)
+                        {
+                            var bn = Path.GetFileNameWithoutExtension(f);
+                            Invoke(() => logTxtBox.Print($"[DEBUG] Checking candidate: {bn}, in usedLabels: {usedLabels.Contains(bn, StringComparer.OrdinalIgnoreCase)}"));
+                            if (usedLabels.Contains(bn, StringComparer.OrdinalIgnoreCase))
+                                filesToMove.Add(f);
+                        }
+                        Invoke(() => logTxtBox.Print($"[DEBUG] Files to move: {filesToMove.Count}"));
+                    }
+
+                    int total = filesToMove.Count;
+                    int done = 0;
+                    foreach (var file in filesToMove)
+                    {
+                        try
+                        {
+                            var dest = Path.Combine(targetImgDir, Path.GetFileName(file));
+                            if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(dest), StringComparison.OrdinalIgnoreCase))
+                                continue; // same file
+                            // if dest exists and we are merging, replace
+                            if (File.Exists(dest))
+                            {
+                                if (mergeReplace)
+                                    File.Delete(dest);
+                                else
+                                {
+                                    // skip moving this file
+                                    done++;
+                                    Invoke(() => logTxtBox.Print($"已跳过已存在文件: {Path.GetFileName(file)}"));
+                                    continue;
+                                }
+                            }
+                            File.Move(file, dest);
+                            done++;
+                            Invoke(() =>
+                            {
+                                StatusShowLog($"打包资源: 已移动 {done}/{total}");
+                                var relDest = MakeRelativePath(Application.StartupPath, dest);
+                                logTxtBox.Print($"已移动: {Path.GetFileName(file)} -> {relDest}");
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Invoke(() => logTxtBox.Print($"移动失败: {file} ({ex.Message})"));
+                        }
+                    }
+
+                    // save current script text as .txt into targetScriptDir
+                    var scriptBaseName = scriptFile != null ? Path.GetFileNameWithoutExtension(scriptFile) : projectName;
+                    var savedScriptPath = Path.Combine(targetScriptDir, scriptBaseName + ".txt");
+                    File.WriteAllText(savedScriptPath, scriptText, Encoding.UTF8);
+                    var relScriptPath = MakeRelativePath(Application.StartupPath, savedScriptPath);
+                    Invoke(() => logTxtBox.Print($"已保存脚本: {relScriptPath}"));
+
+                    // copy json files (including config.json) from script dir
+                    var scriptDir = scriptFile != null ? Path.GetDirectoryName(scriptFile) : null;
+                    if (!string.IsNullOrWhiteSpace(scriptDir) && Directory.Exists(scriptDir))
+                    {
+                        foreach (var jf in Directory.EnumerateFiles(scriptDir, "*.json"))
+                    {
+                        try
+                        {
+                            var dest = Path.Combine(targetScriptDir, Path.GetFileName(jf));
+                            File.Copy(jf, dest, true);
+                            Invoke(() => logTxtBox.Print($"已复制 json: {Path.GetFileName(jf)}"));
+                        }
+                        catch (Exception ex)
+                        {
+                            Invoke(() => logTxtBox.Print($"复制 json 失败: {jf} ({ex.Message})"));
+                        }
+                    }
+                    }
+
+                    // write config.json template into targetScriptDir
+                    var cfg = new
+                    {
+                        ProjectName = projectName,
+                        LabelPath = $"./ImgLabel/{projectName}/",
+                        ScriptPath = $"./Script/{projectName}/"
+                    };
+                    var cfgJson = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true });
+                    File.WriteAllText(Path.Combine(targetScriptDir, "config.json"), cfgJson, Encoding.UTF8);
+                    Invoke(() => logTxtBox.Print("已写入 config.json "));
+
+                    // create temporary package folder
+                    var tempRoot = Path.Combine(Path.GetTempPath(), "EasyConPack_" + Guid.NewGuid().ToString("N"));
+                    var packageImg = Path.Combine(tempRoot, "ImgLabel", projectName);
+                    var packageScript = Path.Combine(tempRoot, "Script", projectName);
+                    Directory.CreateDirectory(packageImg);
+                    Directory.CreateDirectory(packageScript);
+
+                    // copy from target dirs into package dirs
+                    foreach (var f in Directory.EnumerateFiles(targetImgDir))
+                    {
+                        File.Copy(f, Path.Combine(packageImg, Path.GetFileName(f)), true);
+                    }
+                    foreach (var f in Directory.EnumerateFiles(targetScriptDir))
+                        File.Copy(f, Path.Combine(packageScript, Path.GetFileName(f)), true);
+
+                    // create zip
+                    if (File.Exists(zipPath)) File.Delete(zipPath);
+                    ZipFile.CreateFromDirectory(tempRoot, zipPath, CompressionLevel.Optimal, false);
+                    var relZipPath = MakeRelativePath(Application.StartupPath, zipPath);
+                    Invoke(() => logTxtBox.Print($"打包完成: {relZipPath}"));
+
+                    // cleanup temp
+                    try { Directory.Delete(tempRoot, true); } catch { }
+                    Invoke(() => StatusShowLog("打包完成"));
+                }
+                catch (Exception ex)
+                {
+                    Invoke(() =>
+                    {
+                        StatusShowLog("打包失败");
+                        logTxtBox.Print("打包失败: " + ex.Message);
+                        MessageBox.Show("打包失败: " + ex.Message, "打包失败");
+                    });
+                }
+            });
+        }
+
+        private string ResolveLabelPathForScript(string scriptFile)
+        {
+            try
+            {
+                var scriptDir = Path.GetDirectoryName(scriptFile);
+                if (scriptDir == null) return null;
+                var cfgPath = Path.Combine(scriptDir, "config.json");
+                if (!File.Exists(cfgPath)) return null;
+                var json = File.ReadAllText(cfgPath);
+                var doc = JsonSerializer.Deserialize<JsonElement>(json);
+                if (doc.ValueKind == JsonValueKind.Object && doc.TryGetProperty("LabelPath", out var lp))
+                {
+                var val = lp.GetString()?.Trim();
+                    if (string.IsNullOrWhiteSpace(val)) return null;
+                    // if relative, resolve against application root when path starts with './',
+                    // otherwise resolve relative to the script directory
+                    string resolved = null;
+                    if (!Path.IsPathRooted(val))
+                    {
+                    var replaced = val.Replace('/', Path.DirectorySeparatorChar);
+                    if (replaced.StartsWith("." + Path.DirectorySeparatorChar) || replaced.StartsWith("./") || replaced.StartsWith(".\\"))
+                    {
+                        var rel = replaced.Length > 2 ? replaced.Substring(2) : string.Empty;
+                        resolved = Path.GetFullPath(Path.Combine(Application.StartupPath, rel));
+                        Invoke(() => logTxtBox.Print($"[DEBUG] ResolveLabelPath: scriptDir={scriptDir}, raw={val}, resolved(as approot)={resolved}"));
+                        return resolved;
+                    }
+                    var rel2 = replaced.TrimStart(Path.DirectorySeparatorChar);
+                    resolved = Path.GetFullPath(Path.Combine(scriptDir, rel2));
+                    Invoke(() => logTxtBox.Print($"[DEBUG] ResolveLabelPath: scriptDir={scriptDir}, raw={val}, resolved(as scriptdir)={resolved}"));
+                    return resolved;
+                    }
+                    resolved = Path.GetFullPath(val);
+                    Invoke(() => logTxtBox.Print($"[DEBUG] ResolveLabelPath: scriptDir={scriptDir}, raw={val}, resolved(abs)={resolved}"));
+                    return resolved;
+                }
+            }
+            catch
+            {
+                // ignore errors and fallback
+            }
+            return null;
+        }
+
+        private static string PromptInput(string title, string prompt, string defaultText = "")
+        {
+            using var form = new Form();
+            form.Text = title;
+            form.FormBorderStyle = FormBorderStyle.FixedDialog;
+            form.StartPosition = FormStartPosition.CenterParent;
+            form.Width = 400;
+            form.Height = 140;
+            form.MinimizeBox = false;
+            form.MaximizeBox = false;
+
+            var lbl = new Label() { Left = 10, Top = 10, Text = prompt, AutoSize = true };
+            var txt = new TextBox() { Left = 10, Top = 30, Width = 360 }; txt.Text = defaultText;
+            var ok = new Button() { Text = "OK", Left = 220, Width = 70, Top = 60, DialogResult = DialogResult.OK };
+            var cancel = new Button() { Text = "取消", Left = 300, Width = 70, Top = 60, DialogResult = DialogResult.Cancel };
+            form.Controls.Add(lbl); form.Controls.Add(txt); form.Controls.Add(ok); form.Controls.Add(cancel);
+            form.AcceptButton = ok; form.CancelButton = cancel;
+            var dr = form.ShowDialog();
+            if (dr == DialogResult.OK) return txt.Text.Trim();
+            return null;
         }
 
         private void 关闭ToolStripMenuItem_Click(object sender, EventArgs e)
