@@ -593,8 +593,9 @@ namespace EasyCon2.Forms
             }
 
             // save the imglabel to local
-            imglManager.Current.Save(ImgDir);
-            imglManager.LoadImgLabels(ImgDir);
+            var saveDir = string.IsNullOrWhiteSpace(LabelPath) ? ImgDir : LabelPath;
+            imglManager.Current.Save(saveDir);
+            imglManager.LoadImgLabels(saveDir);
         }
 
         private void DynTestBtn_Click(object sender, EventArgs e)

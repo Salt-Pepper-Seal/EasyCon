@@ -941,12 +941,19 @@ namespace EasyCon2.Forms
             var labelSourcePathResolved = ResolveLabelPathForScript(scriptFile) ?? localImgRoot;
             logTxtBox.Print($"使用的标签源路径: {labelSourcePathResolved}");
 
+            // check if source has config.json to determine if we should copy or move
+            var sourceHasConfig = !string.IsNullOrWhiteSpace(scriptFile) && 
+                                  File.Exists(Path.Combine(Path.GetDirectoryName(scriptFile), "config.json"));
+            var useCopy = sourceHasConfig; // use copy if source has config.json (existing project), otherwise move
+            if (useCopy)
+                logTxtBox.Print("检测到项目配置，使用复制模式");
+            else
+                logTxtBox.Print("未检测到项目配置，使用移动模式");
+
             // Determine used labels in current script by tokenizing script and matching against files in label source
             var tokens = new HashSet<string>(Scripter.GetTokens(scriptText, ""), StringComparer.OrdinalIgnoreCase);
             // normalize tokens by trimming leading sigils like @ or $
             var normTokens = new HashSet<string>(tokens.Select(t => t.TrimStart('@', '$')), StringComparer.OrdinalIgnoreCase);
-            logTxtBox.Print($"[DEBUG] Tokens: {string.Join(", ", tokens)}");
-            logTxtBox.Print($"[DEBUG] NormTokens: {string.Join(", ", normTokens)}");
             var usedLabels = new List<string>();
             if (Directory.Exists(labelSourcePathResolved))
             {
@@ -956,13 +963,9 @@ namespace EasyCon2.Forms
                     if (string.IsNullOrWhiteSpace(baseName))
                         continue;
                     if (tokens.Contains(baseName) || normTokens.Contains(baseName))
-                    {
                         usedLabels.Add(baseName);
-                        logTxtBox.Print($"[DEBUG] Matched label: {baseName}");
-                    }
                 }
             }
-            logTxtBox.Print($"[DEBUG] Total used labels: {usedLabels.Count}");
 
             // run packaging in background
             StatusShowLog("开始打包...");
@@ -983,15 +986,12 @@ namespace EasyCon2.Forms
                         var candidates = Directory.EnumerateFiles(labelSourcePathResolved, "*.*", SearchOption.TopDirectoryOnly)
                             .Where(f => new[] { ".il", ".IL", ".ilx", ".ILX" }.Contains(Path.GetExtension(f)))
                             .ToList();
-                        Invoke(() => logTxtBox.Print($"[DEBUG] Candidate label files: {candidates.Count}"));
                         foreach (var f in candidates)
                         {
                             var bn = Path.GetFileNameWithoutExtension(f);
-                            Invoke(() => logTxtBox.Print($"[DEBUG] Checking candidate: {bn}, in usedLabels: {usedLabels.Contains(bn, StringComparer.OrdinalIgnoreCase)}"));
                             if (usedLabels.Contains(bn, StringComparer.OrdinalIgnoreCase))
                                 filesToMove.Add(f);
                         }
-                        Invoke(() => logTxtBox.Print($"[DEBUG] Files to move: {filesToMove.Count}"));
                     }
 
                     int total = filesToMove.Count;
@@ -1001,8 +1001,17 @@ namespace EasyCon2.Forms
                         try
                         {
                             var dest = Path.Combine(targetImgDir, Path.GetFileName(file));
-                            if (string.Equals(Path.GetFullPath(file), Path.GetFullPath(dest), StringComparison.OrdinalIgnoreCase))
-                                continue; // same file
+                            var sourceDir = Path.GetDirectoryName(Path.GetFullPath(file));
+                            var destDir = Path.GetDirectoryName(Path.GetFullPath(dest));
+                            
+                            // skip if same directory (A-A case)
+                            if (string.Equals(sourceDir, destDir, StringComparison.OrdinalIgnoreCase))
+                            {
+                                done++;
+                                Invoke(() => logTxtBox.Print($"源目录与目标目录相同，跳过: {Path.GetFileName(file)}"));
+                                continue;
+                            }
+                            
                             // if dest exists and we are merging, replace
                             if (File.Exists(dest))
                             {
@@ -1016,18 +1025,33 @@ namespace EasyCon2.Forms
                                     continue;
                                 }
                             }
-                            File.Move(file, dest);
-                            done++;
-                            Invoke(() =>
+                            
+                            if (useCopy)
                             {
-                                StatusShowLog($"打包资源: 已移动 {done}/{total}");
-                                var relDest = MakeRelativePath(Application.StartupPath, dest);
-                                logTxtBox.Print($"已移动: {Path.GetFileName(file)} -> {relDest}");
-                            });
+                                File.Copy(file, dest, true);
+                                done++;
+                                Invoke(() =>
+                                {
+                                    StatusShowLog($"打包资源: 已复制 {done}/{total}");
+                                    var relDest = MakeRelativePath(Application.StartupPath, dest);
+                                    logTxtBox.Print($"已复制: {Path.GetFileName(file)} -> {relDest}");
+                                });
+                            }
+                            else
+                            {
+                                File.Move(file, dest);
+                                done++;
+                                Invoke(() =>
+                                {
+                                    StatusShowLog($"打包资源: 已移动 {done}/{total}");
+                                    var relDest = MakeRelativePath(Application.StartupPath, dest);
+                                    logTxtBox.Print($"已移动: {Path.GetFileName(file)} -> {relDest}");
+                                });
+                            }
                         }
                         catch (Exception ex)
                         {
-                            Invoke(() => logTxtBox.Print($"移动失败: {file} ({ex.Message})"));
+                            Invoke(() => logTxtBox.Print($"{(useCopy ? "复制" : "移动")}失败: {file} ({ex.Message})"));
                         }
                     }
 
@@ -1035,8 +1059,7 @@ namespace EasyCon2.Forms
                     var scriptBaseName = scriptFile != null ? Path.GetFileNameWithoutExtension(scriptFile) : projectName;
                     var savedScriptPath = Path.Combine(targetScriptDir, scriptBaseName + ".txt");
                     File.WriteAllText(savedScriptPath, scriptText, Encoding.UTF8);
-                    var relScriptPath = MakeRelativePath(Application.StartupPath, savedScriptPath);
-                    Invoke(() => logTxtBox.Print($"已保存脚本: {relScriptPath}"));
+                    Invoke(() => logTxtBox.Print($"已保存脚本: {savedScriptPath}"));
 
                     // copy json files (including config.json) from script dir
                     var scriptDir = scriptFile != null ? Path.GetDirectoryName(scriptFile) : null;
@@ -1086,8 +1109,7 @@ namespace EasyCon2.Forms
                     // create zip
                     if (File.Exists(zipPath)) File.Delete(zipPath);
                     ZipFile.CreateFromDirectory(tempRoot, zipPath, CompressionLevel.Optimal, false);
-                    var relZipPath = MakeRelativePath(Application.StartupPath, zipPath);
-                    Invoke(() => logTxtBox.Print($"打包完成: {relZipPath}"));
+                    Invoke(() => logTxtBox.Print($"打包完成: {zipPath}"));
 
                     // cleanup temp
                     try { Directory.Delete(tempRoot, true); } catch { }
